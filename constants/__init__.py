@@ -52,7 +52,8 @@ WANDB_PROJECT = "pretraining-validators"
 SUBNET_UID = 9
 BLOCK_7B = 2_735_661
 SEQUENCE_LENGTH_1 = 1024
-SEQUENCE_LENGTH_2 = 8192
+SEQUENCE_LENGTH_2 = 4096
+# 8192
 # The root directory of this project.
 ROOT_DIR = Path(__file__).parent.parent
 
