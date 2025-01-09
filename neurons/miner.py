@@ -267,7 +267,7 @@ async def main(config: bt.config):
             )
         else:
             use_wandb = True
-
+    # CompetitionId.B3_MODEL  CompetitionId.B14_MODEL CompetitionId.B14_MODEL_MULTI_DATASET
     model_constraints = constants.MODEL_CONSTRAINTS_BY_COMPETITION_ID.get(
         CompetitionId.B3_MODEL, None
     )
