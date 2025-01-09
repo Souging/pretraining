@@ -133,7 +133,7 @@ def get_config():
         "--bs", type=int, default=constants.batch_size, help="Batch size"
     )
     parser.add_argument(
-        "--sl", type=int, default=constants.SEQUENCE_LENGTH_2, help="Sequence length"
+        "--sl", type=int, default=4096, help="Sequence length"
     )
     parser.add_argument(
         "--accumulation_steps",
