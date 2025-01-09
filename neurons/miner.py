@@ -358,7 +358,8 @@ async def main(config: bt.config):
 
             for i, batch in enumerate(loader):
                 # Move the input batch to the device
-                inputs = batch.to(model.device)
+                #inputs = batch.to(model.device)
+                inputs = torch.from_numpy(batch).to(model.device)
 
                 # Forward pass: compute the model output and loss
                 outputs = model(inputs, labels=inputs)
