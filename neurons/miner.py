@@ -158,14 +158,14 @@ def get_config():
         action="store_true",  # Defaults to False.
         help="If true, use the hotkey of the miner when generating the hash.",
     )
-    parser.add_argument(
-        "--competition_id",
-        type=CompetitionId,
-        required=True,
-        action=IntEnumAction,
-        default=0,
-        help="competition to mine for (use --list-competitions to get all competitions)",
-    )
+    #parser.add_argument(
+   #     "--competition_id",
+    #    type=CompetitionId,
+   #     required=True,
+  #      action=IntEnumAction,
+  #      default=0,
+  #      help="competition to mine for (use --list-competitions to get all competitions)",
+  #  )
     parser.add_argument(
         "--list_competitions", action="store_true", help="Print out all competitions"
     )
@@ -269,7 +269,7 @@ async def main(config: bt.config):
             use_wandb = True
 
     model_constraints = constants.MODEL_CONSTRAINTS_BY_COMPETITION_ID.get(
-        config.competition_id, None
+        CompetitionId.B3_MODEL, None
     )
 
     if not model_constraints:
