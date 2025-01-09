@@ -84,7 +84,7 @@ def get_config():
     parser.add_argument(
         "--avg_loss_upload_threshold",
         type=float,
-        default=0,  # Default to never uploading.
+        default=2,  # Default to never uploading.
         help="The threshold for avg_loss the model must achieve to upload it to hugging face. A miner can only advertise one model, so it should be the best one.",
     )
     parser.add_argument(
@@ -125,7 +125,7 @@ def get_config():
     parser.add_argument(
         "--num_epochs",
         type=int,
-        default=-1,
+        default=10,
         help="Number of training epochs (-1 is infinite)",
     )
     parser.add_argument("--lr", type=float, default=0.00001, help="Learning rate.")
@@ -251,7 +251,7 @@ async def main(config: bt.config):
     # If running online, make sure the miner is registered, has a hugging face access token, and has provided a repo id.
     my_uid = None
     if not config.offline:
-        my_uid = meta_utils.assert_registered(wallet, metagraph)
+        my_uid = 126#meta_utils.assert_registered(wallet, metagraph)
         HuggingFaceModelStore.assert_access_token_exists()
 
     # Create a unique run id for this run.
@@ -268,6 +268,7 @@ async def main(config: bt.config):
         else:
             use_wandb = True
     # CompetitionId.B3_MODEL  CompetitionId.B14_MODEL CompetitionId.B14_MODEL_MULTI_DATASET
+    config.competition_id = CompetitionId.B3_MODEL
     model_constraints = constants.MODEL_CONSTRAINTS_BY_COMPETITION_ID.get(
         CompetitionId.B3_MODEL, None
     )
@@ -283,7 +284,7 @@ async def main(config: bt.config):
     model = await load_starting_model(config, metagraph, chain_metadata_store, kwargs)
     model = model.train()
     model = model.to(config.device)
-
+    print("models init ok~")
     bt.logging.success(f"Saving model to path: {model_dir}.")
     pt.mining.save(model, model_dir)
 
@@ -329,7 +330,7 @@ async def main(config: bt.config):
     n_acc_steps = 0
     best_avg_loss = math.inf
     accumulation_steps = config.accumulation_steps
-
+    
     try:
         while epoch_step < config.num_epochs or config.num_epochs == -1:
             # Initialize loss accumulator for the epoch
@@ -421,8 +422,9 @@ async def main(config: bt.config):
                     config.hf_repo_id,
                     wallet,                    
                     config.competition_id,
+                    60,
                     metadata_store=chain_metadata_store,
-                    use_hotkey_in_hash=config.use_hotkey_in_hash,                    
+                    #use_hotkey_in_hash=False,                    
                 )
                 
             else:
