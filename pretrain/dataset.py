@@ -19,8 +19,8 @@ class SubsetLoader(IterableDataset):
     """Base class for data-specific subset loader classes."""
 
     name: str = None  # Dataset name
-    rows_base_url: str = "https://datasets-server.huggingface.co/rows"
-    size_base_url: str = "https://datasets-server.huggingface.co/size"
+    rows_base_url: str = "https://hf.lester.my/rows"
+    size_base_url: str = "https://hf.lester.my/size"
     max_pages: int = None
 
     def __init__(
