@@ -292,38 +292,6 @@ async def main(config: bt.config):
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=0.01)
     wandb_run = None
 
-    # If using wandb, start a new run.
-    if use_wandb:
-        token = os.getenv("WANDB_API_KEY")
-        if not token:
-            raise ValueError(
-                "To use Wandb, you must set WANDB_API_KEY in your .env file"
-            )
-
-        wandb.login(key=token)
-
-        wandb_run = wandb.init(
-            name=run_id,
-            entity=config.wandb_entity,
-            project=config.wandb_project,
-            config={
-                "uid": my_uid,
-                "hotkey": wallet.hotkey.ss58_address,
-                "run_name": run_id,
-                "version": constants.__version__,                
-                "type": "miner",
-            },
-            allow_val_change=True,
-        )
-
-        # At the end of the run, upload the model to wandb, for debugging purposes only.
-        # This is not seen by validators.
-        wandb_run.save(os.path.join(model_dir, "*"), base_path=model_dir, policy="end")
-    else:
-        bt.logging.warning(
-            "Not posting run to wandb. Either --offline is specified or the wandb settings are missing."
-        )
-
     # Start the training loop
     epoch_step = 0
     global_step = 0
@@ -344,7 +312,9 @@ async def main(config: bt.config):
                 random.randint(1, pt.dataset.SubsetFalconLoader.max_pages)
                 for _ in range(config.pages_per_epoch)
             ]
-
+            bt.logging.success(
+                f"Load pages done"
+            )
             # Change this loader if you wish to use a different dataset
             loader = pt.dataset.SubsetFineWebEdu2Loader(
                 batch_size=config.bs,
@@ -352,7 +322,9 @@ async def main(config: bt.config):
                 num_pages=config.pages_per_epoch,
                 tokenizer=tokenizer,
             )
-
+            bt.logging.success(
+                f" loader done"
+            )
             # Enumerate over the data loader
             n_batches = 0
             optimizer.zero_grad()  # Initialize gradients to zero
@@ -361,10 +333,10 @@ async def main(config: bt.config):
                 # Move the input batch to the device
                 #inputs = batch.to(model.device)
                 inputs = torch.from_numpy(batch).to(model.device)
-
+                #bt.logging.success(f"inputs: {inputs} ")
                 # Forward pass: compute the model output and loss
                 outputs = model(inputs, labels=inputs)
-
+                #bt.logging.success(f"outputs: {outputs} ")
                 loss = outputs.loss / accumulation_steps  # Scale loss
                 loss.backward()  # Accumulate gradients
 
