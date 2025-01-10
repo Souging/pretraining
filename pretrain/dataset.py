@@ -15,6 +15,8 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+import concurrent.futures
+
 class SubsetLoader(IterableDataset):
     """Base class for data-specific subset loader classes."""
 
@@ -34,6 +36,7 @@ class SubsetLoader(IterableDataset):
         config: str = "default",
         split: str = "train",
         requires_auth: bool = False,
+        num_threads: int = 16,  # Added num_threads parameter
     ):
         self.batch_size = batch_size
         self.sequence_length = sequence_length
@@ -43,6 +46,7 @@ class SubsetLoader(IterableDataset):
         self.config = config
         self.split = split
         self.requires_auth = requires_auth
+        self.num_threads = num_threads
 
         # Initialize with seed if provided
         if random_seed is not None:
@@ -57,7 +61,7 @@ class SubsetLoader(IterableDataset):
         self.buffer = []
         self.used_buffer = []
         self.padded_buffer = []
-
+        self.session = requests.Session()
         # Get HF token if needed
         self.hf_token = None
         if self.requires_auth:
@@ -145,10 +149,13 @@ class SubsetLoader(IterableDataset):
         attempt = 0
         while attempt < self.retry_limit:
             try:
-                response = requests.get(
+                response = self.session.get(
                     self.rows_base_url,
                     params=self.params,
                     headers=self._get_request_headers()
+                )
+                bt.logging.success(
+                    f" response {response}"
                 )
                 response.raise_for_status()
 
@@ -285,8 +292,12 @@ class SubsetFalconLoader(SubsetLoader):
 
 
 class SubsetFineWebEdu2Loader(SubsetLoader):
-    name: str = "HuggingFaceFW/fineweb-edu-score-2"
-
+    name: str = "HuggingFaceFW/fineweb-edu-score-2"    
+    
+    def __init__(self, **kwargs):
+        self.session = requests.Session()
+        super().__init__(**kwargs)
+    
     def fetch_dataset_configs(self) -> typing.Dict[str, typing.Dict]:
         """
         Fetch dataset configs and their metadata.
@@ -297,7 +308,7 @@ class SubsetFineWebEdu2Loader(SubsetLoader):
         attempt = 0
         while attempt < self.retry_limit:
             try:
-                response = requests.get(self.size_base_url, params=params)
+                response = self.session.get(self.size_base_url, params=params)
                 response.raise_for_status()
 
                 configs_dict = response.json()["size"]["splits"]
@@ -323,54 +334,83 @@ class SubsetFineWebEdu2Loader(SubsetLoader):
                     bt.logging.error("Maximum retry limit reached. Unable to fetch data.")
                     raise
 
+    def _fetch_data_for_page_threaded(self, page):
+      """Fetches data for a single page, to be used in a thread."""
+      # Handle different page types (tuple vs int)
+      if isinstance(page, tuple):
+          config_name, page_num, split = page
+          self.params.update({
+              "config": config_name,
+              "split": split,
+              "offset": page_num,
+          })
+      else:
+          self.params["offset"] = page
+
+      self.params["length"] = self.num_rows_per_page
+      attempt = 0
+      while attempt < self.retry_limit:
+          try:
+              response = self.session.get(
+                  self.rows_base_url,
+                  params=self.params,
+                  headers=self._get_request_headers()
+              )
+              response.raise_for_status()
+              input_ids_for_page = []
+              for row in response.json()["rows"]:
+                  content = row["row"]["text"]
+                  input_ids = self.tokenizer(content, truncation=True)["input_ids"]
+                  input_ids_for_page += input_ids
+                  input_ids_for_page += [self.tokenizer.eos_token_id]
+              return input_ids_for_page
+
+          except requests.exceptions.RequestException as e:
+              attempt += 1
+              bt.logging.warning(
+                  f"Failed to fetch data for page {page}, retrying. Attempt {attempt}/{self.retry_limit}"
+              )
+              if attempt < self.retry_limit:
+                  time.sleep(self.retry_delay)
+              else:
+                  bt.logging.error("Maximum retry limit reached. Unable to fetch data.")
+                  raise
+      return []
+
     def _fetch_data_to_buffer(self, num_pages):
-        """Fetch data to buffer with support for multiple configs."""
+        """Fetch data to buffer with support for multiple configs using threads."""
         self.pages = []
         attempts = 0
         duplicates = 0
         initial_offset = random.randint(0, self.num_rows_per_page - 1)
 
-        while len(self.pages) < num_pages:
-            page = self.get_random_pages(num_pages=1, initial_offset=initial_offset)[0]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+            future_to_page = {}
+            while len(self.pages) < num_pages:
+                page = self.get_random_pages(num_pages=1, initial_offset=initial_offset)[0]
 
-            if page in self.pages:
-                duplicates += 1
-                if duplicates >= self.duplicate_page_threshold:
-                    bt.logging.debug(
-                        f"Hit duplicate page threshold of {self.duplicate_page_threshold}. "
-                        f"Stopping early at: {len(self.pages)} pages."
-                    )
-                    break
-                continue
-
-            config_name, page_row_start, split = page
-            params = {
-                "dataset": self.name,
-                "config": config_name,
-                "split": split,
-                "offset": page_row_start,
-                "length": self.num_rows_per_page,
-            }
-
-            try:
-                response = requests.get(self.rows_base_url, params=params)
-                response.raise_for_status()
+                if page in self.pages:
+                    duplicates += 1
+                    if duplicates >= self.duplicate_page_threshold:
+                        bt.logging.debug(
+                            f"Hit duplicate page threshold of {self.duplicate_page_threshold}. "
+                            f"Stopping early at: {len(self.pages)} pages."
+                        )
+                        break
+                    continue
+                
+                future = executor.submit(self._fetch_data_for_page_threaded, page)
+                future_to_page[future] = page
                 self.pages.append(page)
 
-                for row in response.json()["rows"]:
-                    content = row["row"]["text"]
-                    input_ids = self.tokenizer(content, truncation=True)["input_ids"]
-                    self.buffer += input_ids
-                    self.buffer += [self.tokenizer.eos_token_id]
-
-            except requests.exceptions.RequestException as e:
-                attempts += 1
-                bt.logging.warning(
-                    f"Failed to fetch data, retrying. Attempt {attempts}/{self.retry_limit * num_pages}"
-                )
-                if attempts >= num_pages * self.retry_limit:
-                    bt.logging.error("Maximum retry limit reached. Unable to fetch data.")
-                    raise
+            # Collect results as they become available
+            for future in concurrent.futures.as_completed(future_to_page):
+                page = future_to_page[future]
+                try:
+                    input_ids_for_page = future.result()
+                    self.buffer += input_ids_for_page
+                except Exception as e:
+                  bt.logging.warning(f"Error fetching data for page {page}: {e}")
 
     def get_random_pages(self, num_pages, initial_offset):
         """Get random pages across different configs."""
@@ -386,52 +426,41 @@ class SubsetFineWebEdu2Loader(SubsetLoader):
             pages.append((config_name, selected_page_start, split))
         return pages
 
+
     def fetch_data_to_rows(self, num_pages):
-        """Fetch data and return raw text rows instead of adding to buffer."""
-        downloaded_pages = set()
-        rows = []
-        attempts = 0
-        duplicates = 0
-        initial_offset = random.randint(0, self.num_rows_per_page - 1)
+      """Fetch data and return raw text rows instead of adding to buffer, using threads."""
+      downloaded_pages = set()
+      rows = []
+      attempts = 0
+      duplicates = 0
+      initial_offset = random.randint(0, self.num_rows_per_page - 1)
 
-        while len(downloaded_pages) < num_pages:
-            page = self.get_random_pages(num_pages=1, initial_offset=initial_offset)[0]
+      with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+          future_to_page = {}
+          while len(downloaded_pages) < num_pages:
+              page = self.get_random_pages(num_pages=1, initial_offset=initial_offset)[0]
 
-            if page in downloaded_pages:
-                duplicates += 1
-                if duplicates >= self.duplicate_page_threshold:
-                    bt.logging.debug(
-                        f"Hit duplicate page threshold of {self.duplicate_page_threshold}. "
-                        f"Stopping early at: {len(downloaded_pages)} pages."
-                    )
-                    break
-                continue
+              if page in downloaded_pages:
+                  duplicates += 1
+                  if duplicates >= self.duplicate_page_threshold:
+                      bt.logging.debug(
+                          f"Hit duplicate page threshold of {self.duplicate_page_threshold}. "
+                          f"Stopping early at: {len(downloaded_pages)} pages."
+                      )
+                      break
+                  continue
+              
+              future = executor.submit(self._fetch_data_for_page_threaded, page)
+              future_to_page[future] = page
+              downloaded_pages.add(page)
+          for future in concurrent.futures.as_completed(future_to_page):
+                page = future_to_page[future]
+                try:
+                    input_ids_for_page = future.result()
+                    for input_ids in input_ids_for_page:
+                        decoded_text = self.tokenizer.decode(input_ids, skip_special_tokens=True)
+                        rows.append(decoded_text)
 
-            config_name, page_row_start, split = page
-            params = {
-                "dataset": self.name,
-                "config": config_name,
-                "split": split,
-                "offset": page_row_start,
-                "length": self.num_rows_per_page,
-            }
-
-            try:
-                response = requests.get(self.rows_base_url, params=params)
-                response.raise_for_status()
-                downloaded_pages.add(page)
-
-                for row in response.json()["rows"]:
-                    rows.append(row["row"]["text"])
-
-            except requests.exceptions.RequestException as e:
-                attempts += 1
-                bt.logging.warning(
-                    f"Failed to fetch data, retrying with a newly sampled page. "
-                    f"Attempt {attempts}/{self.retry_limit * num_pages}"
-                )
-                if attempts >= num_pages * self.retry_limit:
-                    bt.logging.error("Maximum retry limit reached. Unable to fetch data.")
-                    raise
-
-        return rows
+                except Exception as e:
+                    bt.logging.warning(f"Error fetching data for page {page}: {e}")
+      return rows
