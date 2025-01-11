@@ -36,7 +36,7 @@ class SubsetLoader(IterableDataset):
         config: str = "default",
         split: str = "train",
         requires_auth: bool = False,
-        num_threads: int = 16,  # Added num_threads parameter
+        num_threads: int = 10,  # Added num_threads parameter
     ):
         self.batch_size = batch_size
         self.sequence_length = sequence_length
