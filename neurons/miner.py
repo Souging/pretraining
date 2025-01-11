@@ -138,7 +138,7 @@ def get_config():
     parser.add_argument(
         "--accumulation_steps",
         type=int,
-        default=5,
+        default=10,
         help="The number of training accumulation steps.",
     )
     parser.add_argument(
